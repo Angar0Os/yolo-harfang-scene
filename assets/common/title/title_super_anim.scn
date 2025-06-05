@@ -1,0 +1,224 @@
+{
+	"anims": [
+		{
+			"anim": {
+				"flags": [],
+				"instance_anim": {
+					"keys": [
+						{
+							"loop": "none",
+							"name": "a0",
+							"scale": 1.0,
+							"t": 0
+						}
+					]
+				},
+				"t_end": 0,
+				"t_start": 0
+			},
+			"idx": 133
+		},
+		{
+			"anim": {
+				"flags": [],
+				"instance_anim": {
+					"keys": [
+						{
+							"loop": "none",
+							"name": "a11",
+							"scale": 1.0,
+							"t": 0
+						},
+						{
+							"loop": "none",
+							"name": "a0",
+							"scale": 1.0,
+							"t": 1000000000
+						},
+						{
+							"loop": "none",
+							"name": "a1",
+							"scale": 1.0,
+							"t": 1250000000
+						},
+						{
+							"loop": "none",
+							"name": "a2",
+							"scale": 1.0,
+							"t": 1900000000
+						},
+						{
+							"loop": "none",
+							"name": "a3",
+							"scale": 1.0,
+							"t": 2150000000
+						},
+						{
+							"loop": "none",
+							"name": "a4",
+							"scale": 1.0,
+							"t": 2900000000
+						},
+						{
+							"loop": "none",
+							"name": "a5",
+							"scale": 1.0,
+							"t": 3100000000
+						},
+						{
+							"loop": "none",
+							"name": "a6",
+							"scale": 1.0,
+							"t": 3500000000
+						},
+						{
+							"loop": "none",
+							"name": "a7",
+							"scale": 1.0,
+							"t": 4250000000
+						},
+						{
+							"loop": "none",
+							"name": "a8",
+							"scale": 1.0,
+							"t": 5150000000
+						},
+						{
+							"loop": "none",
+							"name": "a9",
+							"scale": 1.0,
+							"t": 5350000000
+						},
+						{
+							"loop": "none",
+							"name": "a10",
+							"scale": 1.0,
+							"t": 5950000000
+						}
+					]
+				},
+				"t_end": 0,
+				"t_start": 0
+			},
+			"idx": 134
+		}
+	],
+	"canvas": {
+		"clear_color": true,
+		"clear_z": true,
+		"color": [
+			0,
+			0,
+			0,
+			255
+		]
+	},
+	"environment": {
+		"ambient": [
+			0,
+			0,
+			0,
+			0
+		],
+		"brdf_map": "core/pbr/brdf.dds",
+		"current_camera": null,
+		"fog_color": [
+			0,
+			0,
+			0,
+			0
+		],
+		"fog_far": 0.0,
+		"fog_near": 0.0,
+		"probe": {
+			"irradiance_map": "core/pbr/probe.hdr.irradiance",
+			"parallax": 0.0,
+			"pos": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"radiance_map": "core/pbr/probe.hdr.radiance",
+			"rot": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"scl": [
+				1.0,
+				1.0,
+				1.0
+			],
+			"type": "sphere"
+		}
+	},
+	"instances": [
+		{
+			"name": "common/title/title.scn"
+		}
+	],
+	"key_values": null,
+	"nodes": [
+		{
+			"components": [
+				0,
+				4294967295,
+				4294967295,
+				4294967295,
+				4294967295
+			],
+			"disabled": false,
+			"idx": 0,
+			"instance": 0,
+			"name": "title"
+		}
+	],
+	"scene_anims": [
+		{
+			"anim": 4294967295,
+			"frame_duration": 50000000,
+			"name": "type_in",
+			"node_anims": [
+				{
+					"anim": 134,
+					"node": 0
+				}
+			],
+			"t_end": 10000000000,
+			"t_start": 0
+		},
+		{
+			"anim": 4294967295,
+			"frame_duration": 50000000,
+			"name": "init",
+			"node_anims": [
+				{
+					"anim": 133,
+					"node": 0
+				}
+			],
+			"t_end": 100000000,
+			"t_start": 0
+		}
+	],
+	"transforms": [
+		{
+			"parent": null,
+			"pos": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"rot": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"scl": [
+				1.0,
+				1.0,
+				1.0
+			]
+		}
+	]
+}
