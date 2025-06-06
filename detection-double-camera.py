@@ -1,6 +1,8 @@
 import harfang as hg
 import math
 import cv2
+import ctypes
+import numpy as np
 import matplotlib.pyplot as plt 
 
 def InitRenderToTexture(res, pipeline_texture_name = "tex_rb", texture_name = "tex_color_ref", res_x = 800, res_y = 800):
@@ -17,6 +19,19 @@ def InitRenderToTexture(res, pipeline_texture_name = "tex_rb", texture_name = "t
 
 	return frame_buffer, frame_buffer_2, color, color_2, tex_color_ref, tex_readback, picture
 
+def GetOpenCvImageFromPicture(picture):
+	picture_width, picture_height = picture.GetWidth(), picture.GetHeight()
+	picture_data = picture.GetData()
+	bytes_per_pixels = 4
+	data_size = picture_width * picture_height * bytes_per_pixels
+	buffer = (ctypes.c_char * data_size).from_address(picture_data)
+	raw_data = bytes(buffer)
+	np_array = np.frombuffer(raw_data, dtype=np.uint8)
+	image_rgba = np_array.reshape((picture_height, picture_width, bytes_per_pixels))
+	image_bgr = cv2.cvtColor(image_rgba, cv2.COLOR_BGR2RGB)
+
+	return image_bgr
+
 head_positions_x = []
 head_positions_y = []
 head_positions_z = []
@@ -31,6 +46,8 @@ hg.AddAssetsFolder("assets_compiled")
 
 pipeline = hg.CreateForwardPipeline()
 res = hg.PipelineResources()
+state = "none"
+frame = 0
 
 scene = hg.Scene()
 hg.LoadSceneFromAssets("studio.scn", scene, res, hg.GetForwardPipelineInfo())
@@ -52,6 +69,7 @@ frame_buffer, frame_buffer_2, color, color_2, tex_color_ref, tex_readback, pictu
 
 while not hg.ReadKeyboard().Key(hg.K_Escape) and hg.IsWindowOpen(win):
 	dt = hg.TickClock()
+	# dt = hg.time_from_sec_f(1/60)
 	view_id = 0
 	scene.Update(dt)
 
@@ -79,7 +97,17 @@ while not hg.ReadKeyboard().Key(hg.K_Escape) and hg.IsWindowOpen(win):
 	hg.DrawModel(view_id, plane_mdl, plane_prg, val_uniforms, tex_uniforms, hg.TransformationMat4(hg.Vec3(-0.25, 0, 0),  hg.Vec3(-math.pi / 2, 0.0, 0.0),  hg.Vec3(0.40, 0.40, 0.40)))
 	hg.DrawModel(view_id, plane_mdl, plane_prg, val_uniforms, tex_uniforms_2, hg.TransformationMat4(hg.Vec3(0.25, 0, 0),  hg.Vec3(-math.pi / 2, 0.0, 0.0),  hg.Vec3(0.40, 0.40, 0.40)))
 
-	hg.Frame()
+	if state == "none":
+		state = "capture"
+		frame_count_capture, view_id = hg.CaptureTexture(view_id, res, tex_color_ref, tex_readback, picture)
+	elif state == "capture" and frame_count_capture <= frame:
+		image = GetOpenCvImageFromPicture(picture)
+		# hg.SavePNG(picture, "frame" + str(frame) + ".png")
+		if image is not None:
+			state = "none"
+
+	
+	frame = hg.Frame()
 	hg.UpdateWindow(win)
 
 hg.RenderShutdown()
@@ -103,4 +131,4 @@ ax.view_init(elev=30, azim=45)
 
 plt.tight_layout()
 plt.show()
-
+	
