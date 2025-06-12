@@ -6,85 +6,92 @@ import numpy as np
 import matplotlib.pyplot as plt 
 import mediapipe as mp
 import time
+from scipy.spatial.transform import Rotation as R
 
-def create_transformation_matrix(translation, scale, rotation):
-    T = np.eye(4)
-    T[:3, 3] = translation
+def best_fit_transform(A, B):
+    """
+    Estimates the best similarity transformation (rotation, translation, and uniform scale)
+    that aligns a source set of 3D points A to a target set of 3D points B.
     
-    rx, ry, rz = rotation
-    Rx = np.array([[1, 0, 0, 0], [0, np.cos(rx), -np.sin(rx), 0], [0, np.sin(rx), np.cos(rx), 0], [0, 0, 0, 1]])
-    Ry = np.array([[np.cos(ry), 0, np.sin(ry), 0], [0, 1, 0, 0], [-np.sin(ry), 0, np.cos(ry), 0], [0, 0, 0, 1]])
-    Rz = np.array([[np.cos(rz), -np.sin(rz), 0, 0], [np.sin(rz), np.cos(rz), 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+    The algorithm proceeds as follows:
+    1. Compute the centroids of both point sets and center them.
+    2. Estimate the scale by comparing the Frobenius norm (L2 norm) of the centered point sets.
+    3. Normalize both point sets by their respective norms.
+    4. Use Singular Value Decomposition (SVD) on the cross-covariance matrix of the normalized sets
+       to compute the optimal rotation matrix that minimizes the least-squares alignment error.
+    5. Ensure the resulting rotation matrix represents a proper right-handed coordinate system.
+    6. Compute the translation vector from the scaled and rotated source centroid to the target centroid.
     
-    S = np.eye(4)
-    S[0, 0], S[1, 1], S[2, 2] = scale[0], scale[1], scale[2]
+    Mathematically, this method relies on Procrustes analysis and SVD-based orthogonal Procrustes alignment,
+    extended to handle isotropic scaling.
     
-    return T @ Rz @ Ry @ Rx @ S
+    The output is a tuple (R, t, s) such that:
+        B ≈ s * R @ A + t
+    where:
+        R is a 3×3 rotation matrix,
+        t is a 3×1 translation vector,
+        s is a scalar scale factor.
+    """
+    centroid_A = np.mean(A, axis=0)
+    centroid_B = np.mean(B, axis=0)
 
-def apply_bone_correction(position, correction):
-    if position is None or correction is None:
-        return position
-    
-    transform_matrix = create_transformation_matrix(
-        correction['translation'], 
-        correction['scale'], 
-        correction['rotation']
-    )
-    pos_homogeneous = np.array([position[0], position[1], position[2], 1.0])
-    corrected_pos = transform_matrix @ pos_homogeneous
-    return corrected_pos[:3].tolist()
+    A_centered = A - centroid_A
+    B_centered = B - centroid_B
 
-def calculate_optimal_correction(real_positions, triangulated_positions):
-    """Calcule la correction optimale pour une superposition parfaite"""
-    if len(real_positions) < 10 or len(triangulated_positions) < 10:
-        return None
+    norm_A = np.linalg.norm(A_centered)
+    norm_B = np.linalg.norm(B_centered)
+    scale = norm_B / norm_A
+
+    A_scaled = A_centered / norm_A
+    B_scaled = B_centered / norm_B
+
+    H = A_scaled.T @ B_scaled
+    U, _, Vt = np.linalg.svd(H)
+    R_mat = Vt.T @ U.T
+
+    if np.linalg.det(R_mat) < 0:
+        Vt[-1, :] *= -1
+        R_mat = Vt.T @ U.T
+
+    t_vec = centroid_B - scale * R_mat @ centroid_A
+
+    return R_mat, t_vec, scale
+
+def apply_best_fit_correction(triangulated_positions, real_positions):
+    """Apply the best-fit transformation to correct triangulated positions"""
+    if len(triangulated_positions) < 10 or len(real_positions) < 10:
+        return triangulated_positions, None
     
-    real_array = np.array([[pos.x, pos.y, pos.z] for pos in real_positions])
+    # Convert to numpy arrays
     tri_array = np.array(triangulated_positions)
+    real_array = np.array([[pos.x, pos.y, pos.z] for pos in real_positions])
     
-    min_len = min(len(real_array), len(tri_array))
-    real_array = real_array[:min_len]
+    # Ensure same length
+    min_len = min(len(tri_array), len(real_array))
     tri_array = tri_array[:min_len]
+    real_array = real_array[:min_len]
     
-    real_center = np.mean(real_array, axis=0)
-    tri_center = np.mean(tri_array, axis=0)
-    translation_offset = real_center - tri_center
+    # Calculate best-fit transformation
+    R_mat, t_vec, scale = best_fit_transform(tri_array, real_array)
     
-    real_centered = real_array - real_center
-    tri_centered = tri_array - tri_center
-    
-    scale_factor = np.ones(3)
-    for i in range(3):
-        real_std = np.std(real_centered[:, i])
-        tri_std = np.std(tri_centered[:, i])
-        if tri_std > 1e-6:  
-            scale_factor[i] = real_std / tri_std
-    
-    for i in range(3):
-        if np.std(real_centered[:, i]) > 1e-6 and np.std(tri_centered[:, i]) > 1e-6:
-            correlation = np.corrcoef(real_centered[:, i], tri_centered[:, i])[0, 1]
-            if correlation < 0:
-                scale_factor[i] *= -1
-    
-    return {
-        'translation': translation_offset,
-        'scale': scale_factor,
-        'rotation': np.array([0.0, 0.0, 0.0])
-    }
-
-def apply_corrections_to_all_positions(triangulated_positions, correction):
-    if correction is None:
-        return triangulated_positions
-    
+    # Apply transformation to all triangulated positions
     corrected_positions = []
     for pos in triangulated_positions:
-        corrected_pos = apply_bone_correction(pos, correction)
-        corrected_positions.append(corrected_pos)
+        pos_array = np.array(pos)
+        corrected_pos = scale * (R_mat @ pos_array) + t_vec
+        corrected_positions.append(corrected_pos.tolist())
     
-    return corrected_positions
+    transform_info = {
+        'rotation_matrix': R_mat,
+        'translation': t_vec,
+        'scale': scale,
+        'rotation_angles': R.from_matrix(R_mat).as_euler('xyz', degrees=True)
+    }
+    
+    return corrected_positions, transform_info
 
 def calculate_global_bounds(all_bone_data):
-    """Calcule les limites globales pour tous les os afin d'avoir la même échelle"""
+    """Calculate global bounds for all bones to have the same scale"""
     global_min = np.array([float('inf'), float('inf'), float('inf')])
     global_max = np.array([float('-inf'), float('-inf'), float('-inf')])
     
@@ -112,22 +119,26 @@ def calculate_global_bounds(all_bone_data):
     
     return global_min, global_max
 
-def show_comparison_plot_with_same_scale(real_positions, triangulated_positions, corrected_positions, bone_name, global_bounds):
-    """Affiche les graphiques de comparaison avec la même échelle pour tous"""
+def show_comparison_plot_with_same_scale(real_positions, triangulated_positions, corrected_positions, bone_name, global_bounds, transform_info=None):
+    """Display comparison plots with the same scale for all bones"""
     if not real_positions or not triangulated_positions:
         return
         
     global_min, global_max = global_bounds
     
-    fig = plt.figure(figsize=(20, 6))
-    fig.suptitle(f'Analyse Complète - {bone_name} (Échelle Unifiée)', fontsize=16, fontweight='bold')
+    fig = plt.figure(figsize=(20, 8))
+    title = f'Best-Fit Transformation Analysis - {bone_name} (Unified Scale)'
+    if transform_info:
+        title += f'\nScale: {transform_info["scale"]:.3f}, Rotation: ({transform_info["rotation_angles"][0]:.1f}°, {transform_info["rotation_angles"][1]:.1f}°, {transform_info["rotation_angles"][2]:.1f}°)'
+    fig.suptitle(title, fontsize=16, fontweight='bold')
 
+    # Real trajectory
     ax1 = fig.add_subplot(141, projection='3d')
     real_x = [pos.x for pos in real_positions]
     real_y = [pos.y for pos in real_positions]
     real_z = [pos.z for pos in real_positions]
-    ax1.plot(real_x, real_y, real_z, label="Réelle", color='green', linewidth=3, marker='o', markersize=3)
-    ax1.set_title("Trajectoire Réelle")
+    ax1.plot(real_x, real_y, real_z, label="Ground Truth", color='green', linewidth=3, marker='o', markersize=3)
+    ax1.set_title("Ground Truth Trajectory")
     ax1.set_xlabel('X')
     ax1.set_ylabel('Y')
     ax1.set_zlabel('Z')
@@ -136,12 +147,13 @@ def show_comparison_plot_with_same_scale(real_positions, triangulated_positions,
     ax1.set_zlim(global_min[2], global_max[2])
     ax1.legend()
 
+    # Raw triangulated trajectory
     ax2 = fig.add_subplot(142, projection='3d')
     tri_x = [pos[0] for pos in triangulated_positions]
     tri_y = [pos[1] for pos in triangulated_positions]
     tri_z = [pos[2] for pos in triangulated_positions]
-    ax2.plot(tri_x, tri_y, tri_z, label="Triangulée", color='red', linewidth=2, marker='s', markersize=2)
-    ax2.set_title("Triangulation Brute")
+    ax2.plot(tri_x, tri_y, tri_z, label="Raw Triangulated", color='red', linewidth=2, marker='s', markersize=2, linestyle='dashed')
+    ax2.set_title("Raw Triangulation (Noisy)")
     ax2.set_xlabel('X')
     ax2.set_ylabel('Y')
     ax2.set_zlabel('Z')
@@ -150,13 +162,14 @@ def show_comparison_plot_with_same_scale(real_positions, triangulated_positions,
     ax2.set_zlim(global_min[2], global_max[2])
     ax2.legend()
 
+    # Corrected trajectory
     ax3 = fig.add_subplot(143, projection='3d')
     if corrected_positions:
         corr_x = [pos[0] for pos in corrected_positions]
         corr_y = [pos[1] for pos in corrected_positions]
         corr_z = [pos[2] for pos in corrected_positions]
-        ax3.plot(corr_x, corr_y, corr_z, label="Corrigée", color='orange', linewidth=3, marker='^', markersize=3)
-    ax3.set_title("Après Correction")
+        ax3.plot(corr_x, corr_y, corr_z, label="Best-Fit Corrected", color='orange', linewidth=3, marker='^', markersize=3, linestyle='dotted')
+    ax3.set_title("After Best-Fit Correction")
     ax3.set_xlabel('X')
     ax3.set_ylabel('Y')
     ax3.set_zlabel('Z')
@@ -165,12 +178,13 @@ def show_comparison_plot_with_same_scale(real_positions, triangulated_positions,
     ax3.set_zlim(global_min[2], global_max[2])
     ax3.legend()
     
+    # Overlay comparison
     ax4 = fig.add_subplot(144, projection='3d')
-    ax4.plot(real_x, real_y, real_z, label="Réelle", color='green', linewidth=4, alpha=0.8)
-    ax4.plot(tri_x, tri_y, tri_z, label="Triangulée", color='red', linewidth=2, alpha=0.6, linestyle=':')
+    ax4.plot(real_x, real_y, real_z, label="Ground Truth", color='green', linewidth=4, alpha=0.8)
+    ax4.plot(tri_x, tri_y, tri_z, label="Raw Triangulated", color='red', linewidth=2, alpha=0.6, linestyle='dashed')
     if corrected_positions:
-        ax4.plot(corr_x, corr_y, corr_z, label="Corrigée", color='orange', linewidth=2, alpha=0.9, linestyle='--')
-    ax4.set_title("Superposition (Objectif: Courbes Parfaitement Alignées)")
+        ax4.plot(corr_x, corr_y, corr_z, label="Best-Fit Corrected", color='orange', linewidth=2, alpha=0.9, linestyle='dotted')
+    ax4.set_title("Overlay Comparison")
     ax4.set_xlabel('X')
     ax4.set_ylabel('Y')
     ax4.set_zlabel('Z')
@@ -223,6 +237,7 @@ def draw_skeleton_on_image(image, landmarks, connections):
             landmark_drawing_spec=mp_drawing_styles.get_default_pose_landmarks_style())
     return image
 
+# Initialize MediaPipe
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
@@ -232,26 +247,28 @@ pose = mp_pose.Pose(static_image_mode=False, model_complexity=1, smooth_landmark
 pose_2 = mp_pose.Pose(static_image_mode=False, model_complexity=1, smooth_landmarks=True, 
                      min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
+# Bone data structure
 bone_data = {
     'head': {'real_positions': [], 'triangulated_positions': [], 'corrected_positions': [], 
-             'last_front': None, 'last_side': None, 'mediapipe_landmark': mp_pose.PoseLandmark.NOSE, 'name': 'Tête'},
+             'last_front': None, 'last_side': None, 'mediapipe_landmark': mp_pose.PoseLandmark.NOSE, 'name': 'Head'},
     'right_arm': {'real_positions': [], 'triangulated_positions': [], 'corrected_positions': [], 
-                  'last_front': None, 'last_side': None, 'mediapipe_landmark': mp_pose.PoseLandmark.RIGHT_SHOULDER, 'name': 'Bras Droit'},
+                  'last_front': None, 'last_side': None, 'mediapipe_landmark': mp_pose.PoseLandmark.RIGHT_SHOULDER, 'name': 'Right Arm'},
     'left_arm': {'real_positions': [], 'triangulated_positions': [], 'corrected_positions': [], 
-                 'last_front': None, 'last_side': None, 'mediapipe_landmark': mp_pose.PoseLandmark.LEFT_SHOULDER, 'name': 'Bras Gauche'},
+                 'last_front': None, 'last_side': None, 'mediapipe_landmark': mp_pose.PoseLandmark.LEFT_SHOULDER, 'name': 'Left Arm'},
     'right_leg': {'real_positions': [], 'triangulated_positions': [], 'corrected_positions': [], 
-                  'last_front': None, 'last_side': None, 'mediapipe_landmark': mp_pose.PoseLandmark.RIGHT_HIP, 'name': 'Jambe Droite'},
+                  'last_front': None, 'last_side': None, 'mediapipe_landmark': mp_pose.PoseLandmark.RIGHT_HIP, 'name': 'Right Leg'},
     'left_leg': {'real_positions': [], 'triangulated_positions': [], 'corrected_positions': [], 
-                 'last_front': None, 'last_side': None, 'mediapipe_landmark': mp_pose.PoseLandmark.LEFT_HIP, 'name': 'Jambe Gauche'},
+                 'last_front': None, 'last_side': None, 'mediapipe_landmark': mp_pose.PoseLandmark.LEFT_HIP, 'name': 'Left Leg'},
     'hips': {'real_positions': [], 'triangulated_positions': [], 'corrected_positions': [], 
-             'last_front': None, 'last_side': None, 'mediapipe_landmark': mp_pose.PoseLandmark.RIGHT_HIP, 'name': 'Hanches'}
+             'last_front': None, 'last_side': None, 'mediapipe_landmark': mp_pose.PoseLandmark.RIGHT_HIP, 'name': 'Hips'}
 }
 
+# Initialize Harfang
 hg.InputInit()
 hg.WindowSystemInit()
 
 res_x, res_y = 1920, 1080
-win = hg.RenderInit('Détection de Pose avec MediaPipe en Temps Réel', res_x, res_y, hg.RF_VSync | hg.RF_MSAA8X)
+win = hg.RenderInit('Real-Time Pose Detection with Best-Fit Correction', res_x, res_y, hg.RF_VSync | hg.RF_MSAA8X)
 hg.AddAssetsFolder("assets_compiled")
 
 pipeline = hg.CreateForwardPipeline()
@@ -283,17 +300,26 @@ frame_buffer_2, color_2, tex_color_ref_2, tex_readback_2, picture_2 = InitRender
 
 state = state_2 = "none"
 
+print("=== Real-Time Pose Detection with Best-Fit Transformation ===")
+print("Press 'q' in OpenCV window or ESC in main window to stop tracking")
+print("Collecting data for best-fit transformation analysis...")
+
+# Main loop
 while not hg.ReadKeyboard().Key(hg.K_Escape) and hg.IsWindowOpen(win):
     dt = hg.TickClock()
     view_id = 0
     scene.Update(dt)
 
+    # Collect real bone positions
     for bone_key, bone_node in bones.items():
         real_pos = hg.GetTranslation(bone_node.GetTransform().GetWorld())
         bone_data[bone_key]['real_positions'].append(real_pos)
 
+    # Render front camera
     scene.SetCurrentCamera(front_camera)
     view_id, pass_ids = hg.SubmitSceneToPipeline(view_id, scene, hg.IntRect(0, 0, 800, 800), True, pipeline, res, frame_buffer.handle)
+    
+    # Render side camera
     scene.SetCurrentCamera(side_camera)
     view_id, pass_ids = hg.SubmitSceneToPipeline(view_id, scene, hg.IntRect(0, 0, 800, 800), True, pipeline, res, frame_buffer_2.handle)
 
@@ -308,6 +334,7 @@ while not hg.ReadKeyboard().Key(hg.K_Escape) and hg.IsWindowOpen(win):
     hg.DrawModel(view_id, plane_mdl, plane_prg, val_uniforms, tex_uniforms_2, 
                 hg.TransformationMat4(hg.Vec3(0.25, 0, 0), hg.Vec3(-math.pi / 2, 0.0, 0.0), hg.Vec3(0.40, 0.40, 0.40)))
 
+    # Process front camera
     if state == "none":
         state = "capture"
         frame_count_capture, view_id = hg.CaptureTexture(view_id, res, tex_color_ref, tex_readback, picture)
@@ -317,13 +344,14 @@ while not hg.ReadKeyboard().Key(hg.K_Escape) and hg.IsWindowOpen(win):
             results = pose.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
             
             image_with_skeleton = draw_skeleton_on_image(image.copy(), results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-            cv2.imshow('Camera Front - MediaPipe Skeleton', image_with_skeleton)
+            cv2.imshow('Front Camera - MediaPipe Skeleton', image_with_skeleton)
             
             if results.pose_landmarks:
                 for bone_key, data in bone_data.items():
                     data['last_front'] = get_landmark_position(results.pose_landmarks, data['mediapipe_landmark'])
         state = "none"
 
+    # Process side camera
     if state_2 == "none":
         state_2 = "capture"
         frame_count_capture_2, view_id = hg.CaptureTexture(view_id, res, tex_color_ref_2, tex_readback_2, picture_2)
@@ -333,13 +361,14 @@ while not hg.ReadKeyboard().Key(hg.K_Escape) and hg.IsWindowOpen(win):
             results_2 = pose_2.process(cv2.cvtColor(image_2, cv2.COLOR_BGR2RGB))
             
             image_2_with_skeleton = draw_skeleton_on_image(image_2.copy(), results_2.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-            cv2.imshow('Camera Side - MediaPipe Skeleton', image_2_with_skeleton)
+            cv2.imshow('Side Camera - MediaPipe Skeleton', image_2_with_skeleton)
             
             if results_2.pose_landmarks:
                 for bone_key, data in bone_data.items():
                     data['last_side'] = get_landmark_position(results_2.pose_landmarks, data['mediapipe_landmark'])
         state_2 = "none"
 
+    # Triangulate positions
     for bone_key, data in bone_data.items():
         triangulated_pos = triangulate_position(data['last_front'], data['last_side'])
         if triangulated_pos is not None:
@@ -351,33 +380,51 @@ while not hg.ReadKeyboard().Key(hg.K_Escape) and hg.IsWindowOpen(win):
     frame = hg.Frame()
     hg.UpdateWindow(win)
 
+# Cleanup
 cv2.destroyAllWindows()
 pose.close()
 pose_2.close()
 hg.RenderShutdown()
 hg.WindowSystemShutdown()
 
+print("\n=== BEST-FIT TRANSFORMATION ANALYSIS ===")
+
+# Apply best-fit corrections to all bones
+transform_results = {}
 for bone_key, data in bone_data.items():
     if data['real_positions'] and data['triangulated_positions']:
-        optimal_correction = calculate_optimal_correction(data['real_positions'], data['triangulated_positions'])
+        print(f"\nProcessing {data['name']}...")
+        corrected_positions, transform_info = apply_best_fit_correction(
+            data['triangulated_positions'], 
+            data['real_positions']
+        )
         
-        if optimal_correction is not None:
-            data['corrected_positions'] = apply_corrections_to_all_positions(
-                data['triangulated_positions'], optimal_correction
-            )
+        data['corrected_positions'] = corrected_positions
+        transform_results[bone_key] = transform_info
+        
+        if transform_info:
+            print(f"Scale factor: {transform_info['scale']:.4f}")
+            print(f"Rotation angles (degrees): X={transform_info['rotation_angles'][0]:.2f}°, Y={transform_info['rotation_angles'][1]:.2f}°, Z={transform_info['rotation_angles'][2]:.2f}°")
+            print(f"Translation: [{transform_info['translation'][0]:.4f}, {transform_info['translation'][1]:.4f}, {transform_info['translation'][2]:.4f}]")
 
+# Calculate global bounds for consistent visualization
 global_bounds = calculate_global_bounds(bone_data)
 
+# Display results for each bone
 for bone_key, data in bone_data.items():
     if data['real_positions'] and data['triangulated_positions']:
+        transform_info = transform_results.get(bone_key)
+        
         show_comparison_plot_with_same_scale(
             data['real_positions'], 
             data['triangulated_positions'], 
             data['corrected_positions'], 
             data['name'],
-            global_bounds
+            global_bounds,
+            transform_info
         )
         
+        # Calculate accuracy statistics
         if data['corrected_positions'] and len(data['corrected_positions']) > 0:
             real_array = np.array([[pos.x, pos.y, pos.z] for pos in data['real_positions'][:len(data['corrected_positions'])]])
             corrected_array = np.array(data['corrected_positions'])
@@ -386,7 +433,16 @@ for bone_key, data in bone_data.items():
             mean_distance = np.mean(distances)
             max_distance = np.max(distances)
             std_distance = np.std(distances)
+            
+            print(f"\n--- Accuracy Statistics for {data['name']} ---")
+            print(f"Mean distance error: {mean_distance:.4f}")
+            print(f"Maximum distance error: {max_distance:.4f}")
+            print(f"Standard deviation: {std_distance:.4f}")
+            print(f"Points processed: {len(corrected_array)}")
         
-        input(f"Appuyez sur Entrée pour continuer après {data['name']}...")
-        
-        
+        input(f"Press Enter to continue after {data['name']}...")
+
+print("\n=== ANALYSIS COMPLETE ===")
+print("The best-fit transformation method uses Procrustes analysis with SVD")
+print("to find optimal rotation, translation, and uniform scaling parameters.")
+print("This provides more robust alignment than the previous method.")
