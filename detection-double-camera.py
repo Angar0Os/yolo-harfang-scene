@@ -127,7 +127,7 @@ def show_comparison_plot_with_same_scale(real_positions, triangulated_positions,
     real_y = [pos.y for pos in real_positions]
     real_z = [pos.z for pos in real_positions]
     ax1.plot(real_x, real_y, real_z, label="Réelle", color='green', linewidth=3, marker='o', markersize=3)
-    ax1.set_title("🎯 Trajectoire Réelle")
+    ax1.set_title("Trajectoire Réelle")
     ax1.set_xlabel('X')
     ax1.set_ylabel('Y')
     ax1.set_zlabel('Z')
@@ -141,7 +141,7 @@ def show_comparison_plot_with_same_scale(real_positions, triangulated_positions,
     tri_y = [pos[1] for pos in triangulated_positions]
     tri_z = [pos[2] for pos in triangulated_positions]
     ax2.plot(tri_x, tri_y, tri_z, label="Triangulée", color='red', linewidth=2, marker='s', markersize=2)
-    ax2.set_title("📷 Triangulation Brute")
+    ax2.set_title("Triangulation Brute")
     ax2.set_xlabel('X')
     ax2.set_ylabel('Y')
     ax2.set_zlabel('Z')
@@ -156,7 +156,7 @@ def show_comparison_plot_with_same_scale(real_positions, triangulated_positions,
         corr_y = [pos[1] for pos in corrected_positions]
         corr_z = [pos[2] for pos in corrected_positions]
         ax3.plot(corr_x, corr_y, corr_z, label="Corrigée", color='orange', linewidth=3, marker='^', markersize=3)
-    ax3.set_title("🔧 Après Correction")
+    ax3.set_title("Après Correction")
     ax3.set_xlabel('X')
     ax3.set_ylabel('Y')
     ax3.set_zlabel('Z')
